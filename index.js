@@ -11,14 +11,9 @@ function initDB() {
         const request = indexedDB.open(DB_NAME, 1);
         request.onupgradeneeded = (e) => {
             const db = e.target.result;
-            if (!db.objectStoreNames.contains(STORE_NAME)) {
-                db.createObjectStore(STORE_NAME);
-            }
+            if (!db.objectStoreNames.contains(STORE_NAME)) db.createObjectStore(STORE_NAME);
         };
-        request.onsuccess = (e) => {
-            dbInstance = e.target.result;
-            resolve(dbInstance);
-        };
+        request.onsuccess = (e) => { dbInstance = e.target.result; resolve(dbInstance); };
         request.onerror = (e) => reject(e.target.error);
     });
 }
@@ -50,26 +45,45 @@ let isExtensionEnabled = localStorage.getItem('tie_is_enabled') !== 'false';
 let isShowButton = localStorage.getItem('tie_show_button') !== 'false';
 
 let currentUid = 'DEFAULT_COMMON';
-let currentImageCache = {}; // 실시간 적용을 위한 메모리 캐시
+let currentImageCache = {};
 let panelOpen = false;
 let headObserver = null;
 
-// ── 캐릭터 식별자 가져오기 ────────
+// ── ✅ 제미나이 개선: getContext() 공식 API 사용으로 UID 정확도 향상 ────────
 function getCharUID() {
-    const context = getContext();
-    if (context && context.characterId) return 'UID_' + context.characterId;
-    if (context && context.groupId) return 'GROUP_' + context.groupId;
+    try {
+        const context = getContext();
+        if (!context) return 'DEFAULT_COMMON';
+
+        if (context.groupId) return 'GROUP_' + context.groupId;
+
+        if (context.characterId !== undefined && context.characterId !== null) {
+            let uidStr = 'CHID_' + context.characterId;
+            if (context.characters && context.characters[context.characterId]) {
+                const char = context.characters[context.characterId];
+                if (char.avatar) uidStr += '_' + char.avatar;
+                else if (char.name) uidStr += '_' + char.name;
+            } else if (context.name2) {
+                uidStr += '_' + context.name2;
+            }
+            return uidStr;
+        }
+    } catch (err) {
+        console.warn("[테마 편집기] 식별 오류:", err);
+    }
     return 'DEFAULT_COMMON';
 }
 
 function getCharDisplayName() {
-    const context = getContext();
-    if (context && context.name2) return context.name2;
-    if (context && context.groupId) return '그룹채팅';
+    try {
+        const context = getContext();
+        if (context && context.groupId) return '그룹채팅';
+        if (context && context.name2) return context.name2;
+    } catch (err) {}
     return '기본(공통)';
 }
 
-// ── CSS 소스 찾기 ────────
+// ── CSS 원본 소스 찾기 ────────
 function findCSSSource() {
     const pu = window.power_user && window.power_user.custom_css;
     if (pu && pu.length > 100) return { css: pu, type: 'power_user' };
@@ -78,24 +92,39 @@ function findCSSSource() {
     for (let i = 0; i < sheets.length; i++) {
         const sheet = sheets[i];
         if (sheet.ownerNode && sheet.ownerNode.tagName === 'STYLE') {
+            const id = sheet.ownerNode.id;
+            if (id === 'tie-override-css') continue;
             const txt = sheet.ownerNode.textContent || '';
             if (txt.includes('--sm-bg') || txt.includes('mes_block')) {
                 return { css: txt, type: 'style_tag', node: sheet.ownerNode };
             }
         }
     }
+
+    let best = null, bestLen = 500;
+    const allStyles = document.querySelectorAll('style:not(#tie-override-css)');
+    for (let j = 0; j < allStyles.length; j++) {
+        const t = allStyles[j].textContent || '';
+        if (t.length > bestLen && t.includes('background-image')) {
+            bestLen = t.length;
+            best = allStyles[j];
+        }
+    }
+    if (best) return { css: best.textContent, type: 'style_tag', node: best };
     return null;
 }
 
 // ── 실시간 캐시 갱신 및 덮어쓰기 ────────
-const IMG_RE = /url\(\s*['"]?((?:https?:\/\/(?!fontsapi|cdn\.jsdelivr|fonts\.g)[^'")\s]+)|(?:data:image\/[^'")\s]+))['"]?\s*\)/gi;
+// ✅ 내 수정: IMG_RE 전역 선언 제거 - 함수 안에서 매번 새로 생성해야 안전
 
 async function refreshCacheAndApply() {
     if (!isExtensionEnabled) {
         applyImageOverrides();
         return;
     }
-    currentUid = getCharUID();
+    const newUid = getCharUID();
+    console.log('[Theme Image Manager] 현재 적용 대상 UID:', newUid);
+    currentUid = newUid;
     currentImageCache = await loadImagesFromDB(currentUid);
     applyImageOverrides();
 }
@@ -103,22 +132,29 @@ async function refreshCacheAndApply() {
 function applyImageOverrides() {
     if (headObserver) headObserver.disconnect();
 
-    if (!isExtensionEnabled) {
-        const oldStyle = document.getElementById('tie-override-css');
-        if (oldStyle) oldStyle.remove();
+    let s = document.getElementById('tie-override-css');
+    if (!s) {
+        s = document.createElement('style');
+        s.id = 'tie-override-css';
+        document.head.appendChild(s);
+    }
+
+    // ✅ 내 수정 핵심: 봇 전환 시 이전 이미지 잔존 방지 - 항상 먼저 초기화
+    s.textContent = '';
+
+    if (!isExtensionEnabled || Object.keys(currentImageCache).length === 0) {
+        startObservingHead();
         return;
     }
 
     const src = findCSSSource();
     if (!src) {
-        const oldStyle = document.getElementById('tie-override-css');
-        if (oldStyle) oldStyle.remove();
         startObservingHead();
         return;
     }
 
-    let css = src.css;
-    let clean = css.replace(/\/\*[\s\S]*?\*\//g, '');
+    const css = src.css;
+    const clean = css.replace(/\/\*[\s\S]*?\*\//g, '');
     const blockRe = /([^{}]+)\{([^{}]*)\}/g;
     let m;
     let overrideCss = '';
@@ -129,9 +165,10 @@ function applyImageOverrides() {
         let matchFound = false;
         let newBody = body;
 
-        IMG_RE.lastIndex = 0;
+        // ✅ 내 수정 핵심: 블록마다 새 정규식 인스턴스 생성으로 lastIndex 오염 원천 차단
+        const imgRe = /url\(\s*['"]?((?:https?:\/\/(?!fontsapi|cdn\.jsdelivr|fonts\.g)[^'")\s]+)|(?:data:image\/[^'")\s]+))['"]?\s*\)/gi;
         let um;
-        while ((um = IMG_RE.exec(body)) !== null) {
+        while ((um = imgRe.exec(body)) !== null) {
             const url = um[1];
             if (currentImageCache[url]) {
                 const escapedUrl = url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -139,20 +176,10 @@ function applyImageOverrides() {
                 matchFound = true;
             }
         }
-
         if (matchFound) overrideCss += rawSel + ' {' + newBody + '} \n';
     }
 
-    let s = document.getElementById('tie-override-css');
-    if (!s) {
-        s = document.createElement('style');
-        s.id = 'tie-override-css';
-        document.head.appendChild(s);
-    }
-    if (s.textContent !== overrideCss) {
-        s.textContent = overrideCss;
-    }
-
+    s.textContent = overrideCss;
     startObservingHead();
 }
 
@@ -177,9 +204,11 @@ function scanImages() {
     while ((m = blockRe.exec(clean)) !== null) {
         const rawSel = m[1].trim();
         const body = m[2];
-        IMG_RE.lastIndex = 0;
+
+        // ✅ 내 수정: 여기도 지역 변수로 선언
+        const imgRe = /url\(\s*['"]?((?:https?:\/\/(?!fontsapi|cdn\.jsdelivr|fonts\.g)[^'")\s]+)|(?:data:image\/[^'")\s]+))['"]?\s*\)/gi;
         let um;
-        while ((um = IMG_RE.exec(body)) !== null) {
+        while ((um = imgRe.exec(body)) !== null) {
             const url = um[1];
             if (seen[url]) {
                 seen[url].count++;
@@ -191,7 +220,7 @@ function scanImages() {
                 else if (rawSel.includes('mes_block')) label = '캐릭터 폴라로이드';
                 else if (rawSel.includes('is_user') && rawSel.includes('ch_name')) label = '유저 헤더 카드';
                 else if (rawSel.includes('ch_name')) label = '캐릭터 헤더 카드';
-                
+
                 const entry = { url: url, selector: rawSel, label: label, count: 1 };
                 seen[url] = entry;
                 list.push(entry);
@@ -211,23 +240,16 @@ function processAndCompressImage(file) {
                 const canvas = document.createElement('canvas');
                 let width = img.width;
                 let height = img.height;
-                const maxDim = 1500; // 해상도 유지 상한선 넉넉하게 세팅
+                const maxDim = 1500;
 
                 if (width > maxDim || height > maxDim) {
-                    if (width > height) {
-                        height = Math.round((height * maxDim) / width);
-                        width = maxDim;
-                    } else {
-                        width = Math.round((width * maxDim) / height);
-                        height = maxDim;
-                    }
+                    if (width > height) { height = Math.round((height * maxDim) / width); width = maxDim; }
+                    else { width = Math.round((width * maxDim) / height); height = maxDim; }
                 }
                 canvas.width = width;
                 canvas.height = height;
                 const ctx = canvas.getContext('2d');
                 ctx.drawImage(img, 0, 0, width, height);
-                
-                // 가벼우면서 화질이 좋은 WebP 포맷으로 변환
                 resolve(canvas.toDataURL('image/webp', 0.9));
             };
             img.onerror = () => reject(new Error("이미지를 불러올 수 없습니다."));
@@ -253,8 +275,11 @@ function openPanel() {
     panel.id = 'tie-panel';
     panel.innerHTML = `
         <div id="tie-panel-head">
-          <span>🖼️ 테마 이미지 (대상: <span id="tie-dynamic-header" style="color: #D9AAB7; font-weight: bold;">${charName}</span>)</span>
-          <button id="tie-panel-close" title="닫기">&times;</button>
+          <span>🖼️ 이미지 매니저 (<span id="tie-dynamic-header" style="color: #D9AAB7; font-weight: bold;">${charName}</span>)</span>
+          <div>
+            <button id="tie-panel-reset" style="background: #e74c3c; color: white; border: none; border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; font-weight: bold; margin-right: 10px; transition: 0.2s;">이 봇 초기화</button>
+            <button id="tie-panel-close" title="닫기">&times;</button>
+          </div>
         </div>
         <div id="tie-panel-desc">이 봇에게만 적용될 이미지를 설정합니다.</div>
         <div id="tie-img-grid"></div>
@@ -263,6 +288,17 @@ function openPanel() {
     document.body.appendChild(panel);
 
     document.getElementById('tie-panel-close').addEventListener('click', closePanel);
+
+    document.getElementById('tie-panel-reset').addEventListener('click', async () => {
+        if (confirm('이 캐릭터에 적용된 커스텀 이미지를 모두 지우고 원본 테마로 초기화하시겠습니까?')) {
+            currentImageCache = {};
+            await saveImagesToDB(currentUid, currentImageCache);
+            applyImageOverrides();
+            renderImageGrid();
+            setStatus('✅ 원본 테마로 초기화되었습니다.', 'ok');
+        }
+    });
+
     renderImageGrid();
 }
 
@@ -283,7 +319,6 @@ function renderImageGrid() {
         card.className = 'tie-img-card';
         card.dataset.index = i;
 
-        // 메모리 캐시에서 이미지 가져오기
         const displayUrl = currentImageCache[img.url] || img.url;
 
         const thumb = document.createElement('div');
@@ -322,27 +357,24 @@ function pickFile(entry, card, thumb) {
         thumb.style.opacity = '0.5';
 
         try {
-            // 이미지 압축 및 변환
             const dataUrl = await processAndCompressImage(file);
             const charName = getCharDisplayName();
 
-            // 메모리 캐시 갱신 및 대용량 DB 저장
             currentImageCache[entry.url] = dataUrl;
             await saveImagesToDB(currentUid, currentImageCache);
 
             applyImageOverrides();
-            
+
             thumb.style.backgroundImage = `url("${dataUrl}")`;
             thumb.style.opacity = '';
             card.classList.remove('tie-loading');
             card.classList.add('tie-done');
             setStatus(`✅ 교체 완료! (${charName} 봇 전용 저장)`, 'ok');
-            
+
         } catch (err) {
             card.classList.remove('tie-loading');
             thumb.style.opacity = '';
             setStatus(err.message, 'error');
-            console.error(err);
         }
     };
     input.click();
@@ -378,7 +410,7 @@ function createToggleButton() {
     document.body.appendChild(btn);
 }
 
-// ── 실리태번 설정 탭에 UI 스위치 주입 ────────
+// ── 설정 탭에 UI 스위치 주입 ────────
 function setupExtensionUI() {
     const extSettingsHtml = `
         <div class="inline-drawer">
@@ -387,7 +419,6 @@ function setupExtensionUI() {
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
             </div>
             <div class="inline-drawer-content" style="padding: 15px 10px;">
-                
                 <label class="checkbox_label" style="display: flex; align-items: center; cursor: pointer; margin-bottom: 5px;">
                     <input type="checkbox" id="tie_enable_toggle" ${isExtensionEnabled ? 'checked' : ''}>
                     <span style="margin-left: 8px;"><b>테마 이미지 변경 효과 켜기</b></span>
@@ -395,25 +426,23 @@ function setupExtensionUI() {
                 <p style="font-size: 0.85em; color: var(--sm-text-secondary); margin: 0 0 15px 28px; line-height: 1.4;">
                     체크 해제 시 즉시 기능이 완전히 꺼지며, 원본 테마의 이미지로 돌아갑니다.
                 </p>
-
                 <label class="checkbox_label" style="display: flex; align-items: center; cursor: pointer; margin-bottom: 5px;">
                     <input type="checkbox" id="tie_btn_toggle" ${isShowButton ? 'checked' : ''}>
                     <span style="margin-left: 8px;"><b>카메라 버튼(📷) 화면에 띄우기</b></span>
                 </label>
                 <p style="font-size: 0.85em; color: var(--sm-text-secondary); margin: 0 0 5px 28px; line-height: 1.4;">
-                    거슬린다면 체크를 해제하여 버튼만 숨길 수 있습니다. (변경된 이미지는 유지됨)
+                    버튼만 숨길 수 있습니다. (변경된 이미지는 유지됨)
                 </p>
-                
             </div>
         </div>
     `;
-    
+
     $('#extensions_settings').append(extSettingsHtml);
 
     $('#tie_enable_toggle').on('change', async function() {
         isExtensionEnabled = $(this).is(':checked');
         localStorage.setItem('tie_is_enabled', isExtensionEnabled);
-        
+
         if (isExtensionEnabled) {
             createToggleButton();
             await refreshCacheAndApply();
@@ -421,17 +450,16 @@ function setupExtensionUI() {
             closePanel();
             const btn = document.getElementById('tie-toggle-btn');
             if (btn) btn.remove();
-            
             if (headObserver) headObserver.disconnect();
             const oldStyle = document.getElementById('tie-override-css');
-            if (oldStyle) oldStyle.remove();
+            if (oldStyle) oldStyle.textContent = '';
         }
     });
 
     $('#tie_btn_toggle').on('change', function() {
         isShowButton = $(this).is(':checked');
         localStorage.setItem('tie_show_button', isShowButton);
-        
+
         if (isShowButton && isExtensionEnabled) {
             createToggleButton();
         } else {
@@ -449,29 +477,30 @@ function waitForST(cb, n = 0) {
 }
 
 waitForST(() => {
-    setupExtensionUI(); 
-    
-    // 비동기 처리(대용량 DB 로드) 후 스크립트 가동
+    setupExtensionUI();
+
     refreshCacheAndApply().then(() => {
-        if (isExtensionEnabled && isShowButton) {
-            createToggleButton();
-        }
+        if (isExtensionEnabled && isShowButton) createToggleButton();
     });
-    
-    if (window.eventSource) {
-        window.eventSource.on('chatChanged', () => {
-            setTimeout(async () => { 
-                if (isExtensionEnabled) {
-                    await refreshCacheAndApply();
+
+    // 캐릭터 변경 감지 (1초마다 검사)
+    let lastCheckedUid = getCharUID();
+    setInterval(() => {
+        const newUid = getCharUID();
+        if (newUid !== lastCheckedUid) {
+            console.log('[Theme Image Manager] 캐릭터 스위칭 감지! UID:', newUid);
+            lastCheckedUid = newUid;
+            if (isExtensionEnabled) {
+                refreshCacheAndApply().then(() => {
                     if (panelOpen) {
                         const headSpan = document.getElementById('tie-dynamic-header');
                         if (headSpan) headSpan.textContent = getCharDisplayName();
                         renderImageGrid();
                     }
-                }
-            }, 300);
-        });
-    }
-    
-    console.log('[테마 이미지 편집기 v2.8] 대용량 DB(IndexedDB) 적용 및 용량 제한 완벽 해제 완료');
+                });
+            }
+        }
+    }, 1000);
+
+    console.log('[테마 이미지 편집기 v3.3] 두 버전 장점 통합 - 완전체');
 });
