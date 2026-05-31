@@ -1,0 +1,166 @@
+/* 테마 이미지 편집기 v2.0 */
+
+#tie-toggle-btn {
+    position: fixed !important;
+    bottom: 72px !important;
+    right: 14px !important;
+    width: 44px;
+    height: 44px;
+    border-radius: 50% !important;
+    background: #23253a !important;
+    border: 2px solid rgba(255,255,255,0.2) !important;
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    z-index: 99999 !important;
+    box-shadow: 0 3px 14px rgba(0,0,0,0.55) !important;
+    font-size: 20px;
+    line-height: 1;
+    transition: transform 0.15s, background 0.15s;
+    user-select: none;
+}
+#tie-toggle-btn:hover { transform: scale(1.1); background: #2e3150 !important; }
+
+/* 백드롭 */
+#tie-backdrop {
+    position: fixed !important;
+    inset: 0 !important;
+    background: rgba(0,0,0,0.5) !important;
+    z-index: 100000 !important;
+}
+
+/* 메인 패널 */
+#tie-panel {
+    position: fixed !important;
+    top: 50% !important;
+    left: 50% !important;
+    transform: translate(-50%, -50%) !important;
+    width: 520px;
+    max-width: 92vw;
+    max-height: 80vh;
+    background: #16182a !important;
+    border: 1px solid rgba(255,255,255,0.12) !important;
+    border-radius: 16px !important;
+    z-index: 100001 !important;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 16px 50px rgba(0,0,0,0.7) !important;
+    overflow: hidden;
+    font-family: inherit;
+    color: #ddd;
+}
+
+#tie-panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 18px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    font-size: 15px;
+    font-weight: 600;
+    color: #eee;
+    flex-shrink: 0;
+}
+#tie-panel-close {
+    background: none;
+    border: none;
+    color: #aaa;
+    font-size: 22px;
+    cursor: pointer;
+    line-height: 1;
+    padding: 0 4px;
+    transition: color 0.15s;
+}
+#tie-panel-close:hover { color: #fff; }
+
+#tie-panel-desc {
+    padding: 10px 18px;
+    font-size: 12px;
+    color: rgba(200,200,200,0.5);
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    flex-shrink: 0;
+}
+
+#tie-img-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 10px;
+    padding: 14px;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.tie-img-card {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 10px;
+    overflow: hidden;
+    cursor: pointer;
+    transition: border-color 0.15s, transform 0.12s;
+}
+.tie-img-card:hover { border-color: rgba(255,255,255,0.25); transform: translateY(-2px); }
+.tie-img-card.tie-done { border-color: #27AE60 !important; }
+.tie-img-card.tie-loading { opacity: 0.6; pointer-events: none; }
+
+.tie-thumb {
+    width: 100%;
+    height: 90px;
+    background-size: cover;
+    background-position: center;
+    background-color: rgba(255,255,255,0.05);
+    position: relative;
+    overflow: hidden;
+}
+.tie-card-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: opacity 0.2s, background 0.2s;
+    color: white;
+    font-size: 11px;
+    font-weight: 700;
+    text-align: center;
+}
+.tie-img-card:hover .tie-card-overlay {
+    opacity: 1;
+    background: rgba(0,0,0,0.5);
+}
+
+.tie-card-info {
+    padding: 8px 9px 9px;
+}
+.tie-card-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: #ddd;
+    margin-bottom: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.tie-card-sel {
+    font-size: 9px;
+    color: rgba(180,180,180,0.35);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 2px;
+}
+.tie-card-count {
+    font-size: 9px;
+    color: rgba(180,180,180,0.4);
+}
+
+#tie-panel-status {
+    padding: 10px 18px;
+    font-size: 12px;
+    font-weight: 600;
+    border-top: 1px solid rgba(255,255,255,0.06);
+    min-height: 36px;
+    flex-shrink: 0;
+}

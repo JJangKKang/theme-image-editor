@@ -1,0 +1,12 @@
+{
+    "display_name": "테마 이미지 편집기",
+    "loading_order": 20,
+    "requires": [],
+    "optional": [],
+    "js": "index.js",
+    "css": "style.css",
+    "author": "custom",
+    "version": "1.1.0",
+    "homePage": "",
+    "auto_update": false
+}
